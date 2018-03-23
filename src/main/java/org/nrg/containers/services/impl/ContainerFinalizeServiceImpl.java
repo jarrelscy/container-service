@@ -44,6 +44,7 @@ import java.io.InputStream;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
@@ -297,12 +298,10 @@ public class ContainerFinalizeServiceImpl implements ContainerFinalizeService {
                     FilenameUtils.concat(mountXnatHostPath, relativeFilePath);
             final String globMatcher = output.glob() != null ? output.glob() : "";
 
-            final List<File> toUpload = matchGlob(filePath, globMatcher);
-            if (toUpload == null || toUpload.size() == 0) {
-                if (output.required()) {
-                    throw new ContainerException(String.format(prefix + "Nothing to upload for output \"%s\".", output.name()));
-                }
-                return output;
+            final List<File> toUpload = new ArrayList<>(matchGlob(filePath, globMatcher));
+            if (toUpload.size() == 0) {
+                // The glob matched nothing. But we could still upload the root path
+                toUpload.add(new File(filePath));
             }
 
             final String label = StringUtils.isNotBlank(output.label()) ? output.label() : output.name();
