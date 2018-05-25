@@ -42,8 +42,8 @@ apply plugin: "net.ltgt.apt"
 apply plugin: 'io.spring.dependency-management'
 apply plugin: "com.github.zhurlik.swagger"
 
-sourceCompatibility = 1.7
-targetCompatibility = 1.7
+sourceCompatibility = 1.8
+targetCompatibility = 1.8
 
 def vMockito = '1.10.19'
 def vJavassist = '3.21.0-GA'
