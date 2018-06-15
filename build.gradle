@@ -150,6 +150,9 @@ dependencies {
     compile "org.springframework:spring-web"
     compile "org.springframework:spring-webmvc"
 
+    compile "org.aspectj:aspectjweaver"
+    compile "org.aspectj:aspectjrt"
+
     compile "io.springfox:springfox-swagger2:${vSwagger}"
     compile "io.springfox:springfox-swagger-ui:${vSwagger}"
 
