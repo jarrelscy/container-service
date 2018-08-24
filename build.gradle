@@ -43,7 +43,6 @@ sourceCompatibility = 1.7
 targetCompatibility = 1.7
 
 def vXnat = '1.7.5-SNAPSHOT'
-def vXnatDev = '1.7.5-RC1-SNAPSHOT'
 def vMockito = '1.10.19'
 def vJavassist = '3.21.0-GA'
 def vAwaitility = '2.0.0'
@@ -115,7 +114,7 @@ dependencies {
     }
     compileAndInclude "com.jayway.jsonpath:json-path:${vJsonPath}"
 
-    compile ("org.nrg.xnat:web:${vXnatDev}") {
+    compile ("org.nrg.xnat:web") {
         transitive = false
     }
     compile "org.nrg:framework"
