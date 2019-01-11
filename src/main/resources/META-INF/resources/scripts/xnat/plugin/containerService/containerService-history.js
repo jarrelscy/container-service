@@ -558,8 +558,10 @@ XNAT.plugin.containerService = getObject(XNAT.plugin.containerService || {});
                     // return (a.history[0]['time-recorded'] < b.history[0]['time-recorded']) ? 1 : -1
                 });
 
+                var selectedTableData = data.slice(0,24);
+
                 _historyTable = XNAT.spawner.spawn({
-                    historyTable: spawnHistoryTable(data)
+                    historyTable: spawnHistoryTable(selectedTableData)
                 });
                 _historyTable.done(function () {
                     function msgLength(length) {
