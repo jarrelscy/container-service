@@ -25,7 +25,16 @@ import org.nrg.containers.exceptions.ContainerMountResolutionException;
 import org.nrg.containers.exceptions.IllegalInputException;
 import org.nrg.containers.exceptions.UnauthorizedException;
 import org.nrg.containers.model.command.auto.Command;
-import org.nrg.containers.model.command.auto.Command.*;
+import org.nrg.containers.model.command.auto.Command.CommandInput;
+import org.nrg.containers.model.command.auto.Command.CommandMount;
+import org.nrg.containers.model.command.auto.Command.CommandOutput;
+import org.nrg.containers.model.command.auto.Command.CommandWrapper;
+import org.nrg.containers.model.command.auto.Command.CommandWrapperDerivedInput;
+import org.nrg.containers.model.command.auto.Command.CommandWrapperExternalInput;
+import org.nrg.containers.model.command.auto.Command.CommandWrapperInput;
+import org.nrg.containers.model.command.auto.Command.CommandWrapperOutput;
+import org.nrg.containers.model.command.auto.Command.ConfiguredCommand;
+import org.nrg.containers.model.command.auto.Command.Input;
 import org.nrg.containers.model.command.auto.PreresolvedInputTreeNode;
 import org.nrg.containers.model.command.auto.ResolvedCommand;
 import org.nrg.containers.model.command.auto.ResolvedCommand.PartiallyResolvedCommand;
@@ -79,7 +88,19 @@ import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static org.nrg.containers.model.command.entity.CommandWrapperInputType.*;
+import static org.nrg.containers.model.command.entity.CommandWrapperInputType.ASSESSOR;
+import static org.nrg.containers.model.command.entity.CommandWrapperInputType.BOOLEAN;
+import static org.nrg.containers.model.command.entity.CommandWrapperInputType.CONFIG;
+import static org.nrg.containers.model.command.entity.CommandWrapperInputType.DIRECTORY;
+import static org.nrg.containers.model.command.entity.CommandWrapperInputType.FILE;
+import static org.nrg.containers.model.command.entity.CommandWrapperInputType.FILES;
+import static org.nrg.containers.model.command.entity.CommandWrapperInputType.NUMBER;
+import static org.nrg.containers.model.command.entity.CommandWrapperInputType.PROJECT;
+import static org.nrg.containers.model.command.entity.CommandWrapperInputType.RESOURCE;
+import static org.nrg.containers.model.command.entity.CommandWrapperInputType.SCAN;
+import static org.nrg.containers.model.command.entity.CommandWrapperInputType.SESSION;
+import static org.nrg.containers.model.command.entity.CommandWrapperInputType.STRING;
+import static org.nrg.containers.model.command.entity.CommandWrapperInputType.SUBJECT;
 
 @Slf4j
 @Service

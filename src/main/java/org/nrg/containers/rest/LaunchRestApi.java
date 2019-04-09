@@ -496,9 +496,32 @@ public class LaunchRestApi extends AbstractXapiRestController {
     @ResponseBody
     public LaunchReport.BulkLaunchReport bulklaunch(final @PathVariable @ProjectId String project,
                                                     final @PathVariable long wrapperId,
-                                                    final @RequestBody List<Map<String, String>> allRequestParams) {
+                                                    final @RequestBody List<Map<String, String>> allRequestParams,
+                                                    final @PathVariable(value = "delay", required = false) Integer delaySecondsBetween) {
         log.info("Launch requested for wrapper id {}, project {}.", wrapperId, project);
-        return bulkLaunch(project, 0L, null, wrapperId, allRequestParams);
+        return bulkLaunch(project, 0L, null, wrapperId, allRequestParams, 120);
+    }
+
+
+    private LaunchReport.BulkLaunchReport bulkLaunch(final String project,
+                                                     final long commandId,
+                                                     final String wrapperName,
+                                                     final long wrapperId,
+                                                     final List<Map<String, String>> allRequestParams,
+                                                     final Integer delaySecondsBetween) {
+        final LaunchReport.BulkLaunchReport.Builder reportBuilder = LaunchReport.BulkLaunchReport.builder();
+        for (final Map<String, String> paramsSet : allRequestParams) {
+            reportBuilder.addReport(launchContainer(project, commandId, wrapperName, wrapperId, paramsSet));
+            try {
+                if (delaySecondsBetween > 0) {
+                    Thread.sleep(delaySecondsBetween * 1000);
+                }
+            } catch (InterruptedException e){
+                log.error("Exception sleeping ");
+            }
+        }
+
+        return reportBuilder.build();
     }
 
     private LaunchReport.BulkLaunchReport bulkLaunch(final String project,
@@ -506,7 +529,6 @@ public class LaunchRestApi extends AbstractXapiRestController {
                                                      final String wrapperName,
                                                      final long wrapperId,
                                                      final List<Map<String, String>> allRequestParams) {
-
         final LaunchReport.BulkLaunchReport.Builder reportBuilder = LaunchReport.BulkLaunchReport.builder();
         for (final Map<String, String> paramsSet : allRequestParams) {
             reportBuilder.addReport(launchContainer(project, commandId, wrapperName, wrapperId, paramsSet));
