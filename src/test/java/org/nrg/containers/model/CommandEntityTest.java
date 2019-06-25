@@ -30,13 +30,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.File;
 import java.nio.file.Paths;
 import java.security.SecureRandom;
+import java.util.Arrays;
 import java.util.List;
 
-import static org.hamcrest.Matchers.contains;
-import static org.hamcrest.Matchers.hasSize;
-import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.not;
-import static org.hamcrest.Matchers.nullValue;
+import static org.hamcrest.Matchers.*;
 import static org.junit.Assert.assertThat;
 
 @RunWith(SpringJUnit4ClassRunner.class)
@@ -61,6 +58,7 @@ public class CommandEntityTest {
         final String stringInputName = "foo";
         final CommandInput stringInput = CommandInput.builder()
                 .name(stringInputName)
+                .label("input label")
                 .description("A foo that bars")
                 .required(false)
                 .defaultValue("bar")
@@ -69,6 +67,7 @@ public class CommandEntityTest {
                 .build();
         final CommandInput coolInput = CommandInput.builder()
                 .name("my_cool_input")
+                .label("my cool input")
                 .description("A boolean value")
                 .type("boolean")
                 .required(true)
@@ -258,6 +257,7 @@ public class CommandEntityTest {
 
         final CommandInput inputToAdd = CommandInput.builder()
                 .name("this_is_new")
+                .label("this is new")
                 .description("A new input that didn't exist before")
                 .commandLineFlag("--flag")
                 .commandLineSeparator("=")
@@ -273,6 +273,176 @@ public class CommandEntityTest {
         final Command retrievedPojo = Command.create(retrieved);
         assertThat(inputToAdd, isInIgnoreId(retrievedPojo.inputs()));
         assertThat(retrievedPojo.validate(), is(Matchers.<String>emptyIterable()));
+    }
+
+
+    @Test
+    @DirtiesContext
+    public void testSingleSelectInputs() throws Exception {
+
+        final CommandEntity created = commandEntityService.create(COMMAND_ENTITY);
+
+        TestingUtils.commitTransaction();
+
+        final CommandInput inputToAdd = CommandInput.builder()
+                .name("this_is_new")
+                .label("this is new")
+                .description("A new input that didn't exist before")
+                .commandLineFlag("--flag")
+                .commandLineSeparator("=")
+                .defaultValue("yes")
+                .type("select-one")
+                .selectValues(Arrays.asList("yes", "no"))
+                .build();
+        created.addInput(CommandInputEntity.fromPojo(inputToAdd));
+
+        commandEntityService.update(created);
+        TestingUtils.commitTransaction();
+
+        final CommandEntity retrieved = commandEntityService.get(created.getId());
+
+        final Command retrievedPojo = Command.create(retrieved);
+        assertThat(inputToAdd, isInIgnoreId(retrievedPojo.inputs()));
+        assertThat(retrievedPojo.validate(), is(Matchers.<String>emptyIterable()));
+    }
+    @Test
+    @DirtiesContext
+    public void testInvalidSingleSelectInputs() throws Exception {
+        CommandInput invalidInput = CommandInput.builder()
+                .name("bad")
+                .label("this is new")
+                .description("A new input that didn't exist before")
+                .commandLineFlag("--flag")
+                .commandLineSeparator("=")
+                .defaultValue("yes")
+                .type("select-one")
+                .build();
+
+        Command newCmd = COMMAND.toBuilder().addInput(invalidInput).build();
+        assertThat(newCmd.validate(), is(not(empty())));
+
+        invalidInput = CommandInput.builder()
+                .name("bad")
+                .label("this is new")
+                .description("A new input that didn't exist before")
+                .commandLineFlag("--flag")
+                .commandLineSeparator("=")
+                .defaultValue("sdaf")
+                .type("select-one")
+                .selectValues(Arrays.asList("yes", "no"))
+                .build();
+
+        newCmd = COMMAND.toBuilder().addInput(invalidInput).build();
+        assertThat(newCmd.validate(), is(not(empty())));
+
+        invalidInput = CommandInput.builder()
+                .name("bad")
+                .label("this is new")
+                .description("A new input that didn't exist before")
+                .commandLineFlag("--flag")
+                .commandLineSeparator("=")
+                .defaultValue("[\"yes\",\"no\"]")
+                .type("select-one")
+                .selectValues(Arrays.asList("yes", "no"))
+                .build();
+
+        newCmd = COMMAND.toBuilder().addInput(invalidInput).build();
+        assertThat(newCmd.validate(), is(not(empty())));
+    }
+
+    @Test
+    @DirtiesContext
+    public void testMultiSelectInputs() throws Exception {
+        final CommandEntity created = commandEntityService.create(COMMAND_ENTITY);
+
+        TestingUtils.commitTransaction();
+
+        final CommandInput inputToAdd = CommandInput.builder()
+                .name("this_is_new")
+                .label("this is new")
+                .description("A new input that didn't exist before")
+                .commandLineFlag("--flag")
+                .commandLineSeparator("=")
+                .defaultValue("yes")
+                .type("select-many")
+                .selectValues(Arrays.asList("yes", "no", "maybe"))
+                .build();
+        created.addInput(CommandInputEntity.fromPojo(inputToAdd));
+
+        commandEntityService.update(created);
+        TestingUtils.commitTransaction();
+
+        final CommandEntity retrieved = commandEntityService.get(created.getId());
+
+        final Command retrievedPojo = Command.create(retrieved);
+        assertThat(inputToAdd, isInIgnoreId(retrievedPojo.inputs()));
+        assertThat(retrievedPojo.validate(), is(Matchers.<String>emptyIterable()));
+
+        final CommandInput inputToAdd2 = CommandInput.builder()
+                .name("this_is_new2")
+                .label("this is new2")
+                .description("A new2 input that didn't exist before")
+                .commandLineFlag("--flag")
+                .commandLineSeparator("=")
+                .defaultValue("[\"yes\",\"no\"]")
+                .type("select-many")
+                .selectValues(Arrays.asList("yes", "no", "maybe"))
+                .build();
+        retrieved.addInput(CommandInputEntity.fromPojo(inputToAdd2));
+
+        commandEntityService.update(retrieved);
+        TestingUtils.commitTransaction();
+
+        final CommandEntity retrieved2 = commandEntityService.get(retrieved.getId());
+
+        final Command retrievedPojo2 = Command.create(retrieved2);
+        assertThat(inputToAdd2, isInIgnoreId(retrievedPojo2.inputs()));
+        assertThat(retrievedPojo2.validate(), is(Matchers.<String>emptyIterable()));
+    }
+
+    @Test
+    @DirtiesContext
+    public void testInvalidMultiSelectInputs() throws Exception {
+        CommandInput invalidInput = CommandInput.builder()
+                .name("bad")
+                .label("this is new")
+                .description("A new input that didn't exist before")
+                .commandLineFlag("--flag")
+                .commandLineSeparator("=")
+                .defaultValue("yes")
+                .type("select-many")
+                .build();
+
+        Command newCmd = COMMAND.toBuilder().addInput(invalidInput).build();
+        assertThat(newCmd.validate(), is(not(empty())));
+
+        invalidInput = CommandInput.builder()
+                .name("bad")
+                .label("this is new")
+                .description("A new input that didn't exist before")
+                .commandLineFlag("--flag")
+                .commandLineSeparator("=")
+                .defaultValue("sdaf")
+                .type("select-many")
+                .selectValues(Arrays.asList("yes", "no"))
+                .build();
+
+        newCmd = COMMAND.toBuilder().addInput(invalidInput).build();
+        assertThat(newCmd.validate(), is(not(empty())));
+
+        invalidInput = CommandInput.builder()
+                .name("bad")
+                .label("this is new")
+                .description("A new input that didn't exist before")
+                .commandLineFlag("--flag")
+                .commandLineSeparator("=")
+                .defaultValue("[\"yes\",\"no\",\"sdaf\"]")
+                .type("select-many")
+                .selectValues(Arrays.asList("yes", "no"))
+                .build();
+
+        newCmd = COMMAND.toBuilder().addInput(invalidInput).build();
+        assertThat(newCmd.validate(), is(not(empty())));
     }
 
     private Matcher<CommandInput> isInIgnoreId(final List<CommandInput> expected) {
@@ -342,6 +512,7 @@ public class CommandEntityTest {
         final String xnatObjectProperty = "label";
         final CommandWrapperDerivedInput derivedInput = CommandWrapperDerivedInput.builder()
                 .name(derivedInputName)
+                .label("the label")
                 .type("string")
                 .derivedFromWrapperInput(externalInputName)
                 .derivedFromXnatObjectProperty(xnatObjectProperty)
@@ -405,7 +576,6 @@ public class CommandEntityTest {
     @DirtiesContext
     public void testRemoveEntitiesFromWrapper() throws Exception {
         final String outputMountName = "out";
-        final CommandMount mountIn = CommandMount.create("in2", false, "/input2");
 
         final String stringInputName = "foo2";
         final CommandInput stringInput = CommandInput.builder()
@@ -457,6 +627,7 @@ public class CommandEntityTest {
         final String xnatObjectProperty = "label";
         final CommandWrapperDerivedInput derivedInput = CommandWrapperDerivedInput.builder()
                 .name(derivedInputName)
+                .label("the label")
                 .type("string")
                 .derivedFromWrapperInput(externalInputName)
                 .derivedFromXnatObjectProperty(xnatObjectProperty)
@@ -509,6 +680,10 @@ public class CommandEntityTest {
 
         //update with new wrapper
         Command cmd = COMMAND.toBuilder()
+                .addInput(stringInput)
+                .addInput(stringInput2)
+                .addOutput(commandOutput)
+                .addOutput(commandOutput2)
                 .addCommandWrapper(newWrapper)
                 .build();
         created.update(cmd);

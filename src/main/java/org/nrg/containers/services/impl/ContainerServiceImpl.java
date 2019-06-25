@@ -23,6 +23,7 @@ import javax.annotation.Nullable;
 import com.spotify.docker.client.DockerClient;
 import com.spotify.docker.client.messages.swarm.TaskStatus;
 import org.apache.commons.lang3.StringUtils;
+import org.nrg.action.ClientException;
 import org.nrg.containers.api.ContainerControlApi;
 import org.nrg.containers.events.model.ContainerEvent;
 import org.nrg.containers.events.model.DockerContainerEvent;
@@ -67,7 +68,10 @@ import org.nrg.xft.exception.FieldNotFoundException;
 import org.nrg.xft.exception.XFTInitException;
 import org.nrg.xft.search.CriteriaCollection;
 import org.nrg.xft.security.UserI;
+import org.nrg.xnat.archive.ResourceData;
 import org.nrg.xnat.services.XnatAppInfo;
+import org.nrg.xnat.services.archive.CatalogService;
+import org.nrg.xnat.turbine.utils.ArchivableItem;
 import org.nrg.xnat.utils.WorkflowUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -98,6 +102,7 @@ public class ContainerServiceImpl implements ContainerService {
     private final SiteConfigPreferences siteConfigPreferences;
     private final ContainerFinalizeService containerFinalizeService;
     private final XnatAppInfo xnatAppInfo;
+    private final CatalogService catalogService;
 
     @Autowired
     public ContainerServiceImpl(final ContainerControlApi containerControlApi,
@@ -107,7 +112,8 @@ public class ContainerServiceImpl implements ContainerService {
                                 final AliasTokenService aliasTokenService,
                                 final SiteConfigPreferences siteConfigPreferences,
                                 final ContainerFinalizeService containerFinalizeService,
-                                final XnatAppInfo xnatAppInfo) {
+                                final XnatAppInfo xnatAppInfo,
+                                final CatalogService catalogService) {
         this.containerControlApi = containerControlApi;
         this.containerEntityService = containerEntityService;
         this.commandResolutionService = commandResolutionService;
@@ -116,6 +122,7 @@ public class ContainerServiceImpl implements ContainerService {
         this.siteConfigPreferences = siteConfigPreferences;
         this.containerFinalizeService = containerFinalizeService;
         this.xnatAppInfo = xnatAppInfo;
+        this.catalogService = catalogService;
     }
 
     @Override
@@ -534,12 +541,8 @@ public class ContainerServiceImpl implements ContainerService {
         if (resolvedCommand.type().equals(DOCKER_SETUP.getName()) && workflow != null) {
             // Create a new workflow for setup (wrapup doesn't come through this method, gets its workflow
             // in createWrapupContainerInDbFromResolvedCommand)
-            try {
-                workflow = createContainerWorkflow(workflow.getId(), workflow.getDataType(),
-                        workflow.getPipelineName() + "-setup", workflow.getExternalid(), userI);
-            } catch (Exception e) {
-                workflow = null;
-            }
+            workflow = createContainerWorkflow(workflow.getId(), workflow.getDataType(),
+                    workflow.getPipelineName() + "-setup", workflow.getExternalid(), userI);
         }
 
         // Update workflow with resolved command (or try to create it if null)
@@ -606,14 +609,11 @@ public class ContainerServiceImpl implements ContainerService {
     private Container createWrapupContainerInDbFromResolvedCommand(final ResolvedCommand resolvedCommand, final Container parent,
                                                                    final UserI userI, PersistentWorkflowI parentWorkflow) {
 
-        String workflowid;
-        try {
-            PersistentWorkflowI workflow = createContainerWorkflow(parentWorkflow.getId(), parentWorkflow.getDataType(),
-                    parentWorkflow.getPipelineName() + "-wrapup", parentWorkflow.getExternalid(), userI);
-            workflowid = workflow.getWorkflowId().toString();
-        } catch (Exception e) {
-            workflowid = null;
-        }
+
+        PersistentWorkflowI workflow = createContainerWorkflow(parentWorkflow.getId(), parentWorkflow.getDataType(),
+                parentWorkflow.getPipelineName() + "-wrapup", parentWorkflow.getExternalid(), userI);
+        String workflowid = workflow == null ? null : workflow.getWorkflowId().toString();
+
         final Container toCreate = Container.containerFromResolvedCommand(resolvedCommand, null, userI.getLogin()).toBuilder()
                 .parent(parent)
                 .workflowId(workflowid)
@@ -1290,7 +1290,7 @@ public class ContainerServiceImpl implements ContainerService {
             try {
                 return new FileInputStream(logPath);
             } catch (FileNotFoundException e) {
-                log.error("Container %s log file %s not found. Path: %s", container.databaseId(), logFileName, logPath);
+                log.error("Container {} log file {} not found. Path: {}", container.databaseId(), logFileName, logPath);
             }
         }
 
@@ -1354,54 +1354,73 @@ public class ContainerServiceImpl implements ContainerService {
 
     /**
      * Creates a workflow object to be used with container service
-     * @param xnatIdOrArchivePath the xnat ID of the container's root element
+     * @param xnatIdOrUri the xnat ID or URI string of the container's root element
      * @param containerInputType the container input type of the container's root element
      * @param wrapperName the wrapper name or id as a string
      * @param projectId the project ID
      * @param user the user
      * @return the workflow
-     * @throws Exception if unable to create workflow
      */
-    public PersistentWorkflowI createContainerWorkflow(String xnatIdOrArchivePath, String containerInputType,
-                                                       String wrapperName, String projectId, UserI user)
-            throws Exception {
-        String xnatId = new File(xnatIdOrArchivePath).getName(); //sometimes, this is the archive path
-        String xsiType = null;
-        try {
-            switch (CommandWrapperInputType.valueOf(containerInputType)) {
-                case PROJECT:
-                    xsiType = XnatProjectdata.SCHEMA_ELEMENT_NAME;
-                    break;
-                case SUBJECT:
-                    xsiType = XnatSubjectdata.SCHEMA_ELEMENT_NAME;
-                    break;
-                case SESSION:
-                    xsiType = XnatImagesessiondata.SCHEMA_ELEMENT_NAME;
-                    break;
-                case SCAN:
-                    xsiType = XnatScscandata.SCHEMA_ELEMENT_NAME;
-                    break;
-                case RESOURCE:
-                    xsiType = XnatResource.SCHEMA_ELEMENT_NAME;
-                    break;
-                case ASSESSOR:
-                    xsiType = XnatSubjectassessordata.SCHEMA_ELEMENT_NAME;
-                    break;
-            }
-        } catch (IllegalArgumentException e) {
-            // Not what we're expecting, but just go with it (it'll be updated after command is resolved)
-            xsiType = containerInputType;
-        } catch (NullPointerException e) {
-            xsiType = "";
+    @Nullable
+    public PersistentWorkflowI createContainerWorkflow(String xnatIdOrUri, String containerInputType,
+                                                       String wrapperName, String projectId, UserI user) {
+        if (xnatIdOrUri == null) {
+            return null;
         }
-        PersistentWorkflowI workflow = WorkflowUtils.buildOpenWorkflow(user, xsiType, xnatId, projectId,
-                EventUtils.newEventInstance(EventUtils.CATEGORY.DATA, EventUtils.TYPE.PROCESS,
-                        wrapperName,
-                        containerLaunchJustification,
-                        ""));
-        workflow.setStatus(PersistentWorkflowUtils.QUEUED);
-        WorkflowUtils.save(workflow, workflow.buildEvent());
-        log.debug("Created workflow {}.", workflow.getWorkflowId());
+
+        String xsiType;
+        String xnatId;
+        try {
+            // Attempt to parse xnatIdOrUri as URI, from this, get archivable item for workflow
+            ResourceData resourceData = catalogService.getResourceDataFromUri(xnatIdOrUri);
+            ArchivableItem item = resourceData.getItem();
+            xnatId = item.getId();
+            xsiType = item.getXSIType();
+
+        } catch (ClientException e) {
+            // Fall back on id as string, determine xsiType from container input type
+            xnatId = xnatIdOrUri;
+            xsiType = containerInputType;
+            try {
+                switch (CommandWrapperInputType.valueOf(containerInputType.toUpperCase())) {
+                    case PROJECT:
+                        xsiType = XnatProjectdata.SCHEMA_ELEMENT_NAME;
+                        break;
+                    case SUBJECT:
+                        xsiType = XnatSubjectdata.SCHEMA_ELEMENT_NAME;
+                        break;
+                    case SESSION:
+                        xsiType = XnatImagesessiondata.SCHEMA_ELEMENT_NAME;
+                        break;
+                    case SCAN:
+                        xsiType = XnatImagescandata.SCHEMA_ELEMENT_NAME;
+                        break;
+                    case RESOURCE:
+                        xsiType = XnatResource.SCHEMA_ELEMENT_NAME;
+                        break;
+                    case ASSESSOR:
+                        xsiType = XnatSubjectassessordata.SCHEMA_ELEMENT_NAME;
+                        break;
+                }
+            } catch (IllegalArgumentException | NullPointerException ex) {
+                // Not what we're expecting, but just go with it (it'll be updated after command is resolved)
+                xsiType = containerInputType;
+            }
+        }
+
+        PersistentWorkflowI workflow = null;
+        try {
+            workflow = WorkflowUtils.buildOpenWorkflow(user, xsiType, xnatId, projectId,
+                    EventUtils.newEventInstance(EventUtils.CATEGORY.DATA, EventUtils.TYPE.PROCESS,
+                            wrapperName,
+                            containerLaunchJustification,
+                            ""));
+            workflow.setStatus(PersistentWorkflowUtils.QUEUED);
+            WorkflowUtils.save(workflow, workflow.buildEvent());
+            log.debug("Created workflow {}.", workflow.getWorkflowId());
+        } catch (Exception e) {
+            log.error("Issue creating workflow for {} {}", xnatId, wrapperName, e);
+        }
         return workflow;
     }
 

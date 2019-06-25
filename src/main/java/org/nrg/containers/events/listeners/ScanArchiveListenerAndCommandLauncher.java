@@ -13,6 +13,7 @@ import org.nrg.containers.exceptions.NoDockerServerException;
 import org.nrg.containers.exceptions.UnauthorizedException;
 import org.nrg.containers.model.CommandEventMapping;
 import org.nrg.containers.model.xnat.Scan;
+import org.nrg.containers.model.xnat.Session;
 import org.nrg.containers.services.CommandEventMappingService;
 import org.nrg.containers.services.ContainerService;
 import org.nrg.framework.exceptions.NotFoundException;
@@ -104,7 +105,7 @@ public class ScanArchiveListenerAndCommandLauncher implements Consumer<Event<Sca
                                 }
                             }
                         }
-                        PersistentWorkflowI workflow = containerService.createContainerWorkflow(scan.getId(),
+                        PersistentWorkflowI workflow = containerService.createContainerWorkflow(scan.getUri(),
                                 scan.getXsiType(), wrapperName, subscriptionProjectId, subscriptionUser);
                         containerService.queueResolveCommandAndLaunchContainer(subscriptionProjectId, 0L,
                                 commandId, wrapperName, inputValues, subscriptionUser, workflow);

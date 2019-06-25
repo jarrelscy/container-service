@@ -37,6 +37,7 @@ import org.nrg.mail.services.MailService;
 import org.nrg.mail.services.impl.SpringBasedMailServiceImpl;
 import org.nrg.xdat.preferences.SiteConfigPreferences;
 import org.nrg.xdat.security.services.PermissionsServiceI;
+import org.nrg.xdat.security.user.XnatUserProvider;
 import org.nrg.xdat.services.AliasTokenService;
 import org.nrg.xnat.services.XnatAppInfo;
 import org.nrg.xnat.services.archive.CatalogService;
@@ -57,6 +58,8 @@ import reactor.core.dispatch.RingBufferDispatcher;
 
 import javax.sql.DataSource;
 import java.util.Properties;
+
+import static org.mockito.Mockito.when;
 
 @Configuration
 @EnableTransactionManagement
@@ -135,7 +138,7 @@ public class IntegrationTestConfig {
                                                              final SiteConfigPreferences siteConfigPreferences,
                                                              final CatalogService catalogService,
                                                              final MailService mailService) {
-        return new ContainerFinalizeServiceImpl(containerControlApi, siteConfigPreferences, catalogService,mailService);
+        return new ContainerFinalizeServiceImpl(containerControlApi, siteConfigPreferences, catalogService, mailService);
     }
 
     @Bean
@@ -146,10 +149,11 @@ public class IntegrationTestConfig {
                                              final AliasTokenService aliasTokenService,
                                              final SiteConfigPreferences siteConfigPreferences,
                                              final ContainerFinalizeService containerFinalizeService,
-                                             @Qualifier("mockXnatAppInfo") final XnatAppInfo mockXnatAppInfo) {
+                                             @Qualifier("mockXnatAppInfo") final XnatAppInfo mockXnatAppInfo,
+                                             final CatalogService catalogService) {
         return new ContainerServiceImpl(containerControlApi, containerEntityService,
                         commandResolutionService, commandService, aliasTokenService, siteConfigPreferences,
-                        containerFinalizeService, mockXnatAppInfo);
+                        containerFinalizeService, mockXnatAppInfo, catalogService);
     }
 
     @Bean
@@ -158,9 +162,10 @@ public class IntegrationTestConfig {
                                                              final DockerServerService serverService,
                                                              final SiteConfigPreferences siteConfigPreferences,
                                                              final ObjectMapper objectMapper,
-                                                             final DockerService dockerService) {
+                                                             final DockerService dockerService,
+                                                             final CatalogService mockCatalogService) {
         return new CommandResolutionServiceImpl(commandService, configService, serverService,
-                siteConfigPreferences, objectMapper, dockerService);
+                siteConfigPreferences, objectMapper, dockerService, mockCatalogService);
     }
 
     @Bean
@@ -198,7 +203,7 @@ public class IntegrationTestConfig {
     }
 
     @Bean
-    public CatalogService catalogService() {
+    public CatalogService mockCatalogService() {
         return Mockito.mock(CatalogService.class);
     }
 
@@ -207,6 +212,11 @@ public class IntegrationTestConfig {
         final ContextService contextService = new ContextService();
         contextService.setApplicationContext(applicationContext);
         return contextService;
+    }
+
+    @Bean
+    public XnatUserProvider primaryAdminUserProvider() {
+        return Mockito.mock(XnatUserProvider.class);
     }
 
     /*

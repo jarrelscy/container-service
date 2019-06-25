@@ -13,7 +13,9 @@ Not yet released
 * Automatically restart containers that are killed due to docker swarm nodes being removed from swarm.
 * Live logging display
 * Add support for command inputs that resolve to mulitple values (e.g., multiple T1 scans)
-
+* Add label field to command.json inputs to allow customization of UI display
+* Add select-values field to command.json inputs to allow select box rendering of non-xnat inputs
+* Support scan output type (via scan xml) and resource uploads to it
 
 ### Bugfixes
 
@@ -21,11 +23,13 @@ Not yet released
 * Remove @Audited annotations to prevent database size explosion
 * Mannually set swarm service names since auto-generated ones can clash on high throughput
 * Allow removal of inputs, outputs, wrappers, external inputs, derived inputs, and output handlers from command.json via API
+* [CS-54][]: For writable directory mount with existing contents in archive space, copy all files out of the root (archive) directory to a build directory. NOTE: case of a mount being both input and output not addressed
 
 
 ### Other
 
 [CS-440]: https://issues.xnat.org/browse/CS-440
+[CS-54]: https://issues.xnat.org/browse/CS-54
 
 
 

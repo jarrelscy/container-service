@@ -5,19 +5,9 @@ import org.nrg.containers.model.command.auto.Command;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-import javax.persistence.Column;
-import javax.persistence.Entity;
-import javax.persistence.EnumType;
-import javax.persistence.Enumerated;
-import javax.persistence.GeneratedValue;
-import javax.persistence.GenerationType;
-import javax.persistence.Id;
-import javax.persistence.ManyToOne;
-import javax.persistence.Transient;
+import javax.persistence.*;
 import java.io.Serializable;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Objects;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Entity
@@ -27,6 +17,7 @@ public class CommandInputEntity implements Serializable {
     private long id;
     private CommandEntity commandEntity;
     private String name;
+    private String label;
     private String description;
     private Type type = DEFAULT_TYPE;
     private Boolean required;
@@ -38,6 +29,7 @@ public class CommandInputEntity implements Serializable {
     private String trueValue;
     private String falseValue;
     private Boolean sensitive;
+    private List<String> selectValues = Collections.emptyList();
     private MultipleDelimiter multipleDelimiter;
 
     public static CommandInputEntity fromPojo(final Command.CommandInput commandInput) {
@@ -50,6 +42,7 @@ public class CommandInputEntity implements Serializable {
             this.setId(commandInput.id());
         }
         this.setName(commandInput.name());
+        this.setLabel(commandInput.label());
         this.setDescription(commandInput.description());
         this.setRequired(commandInput.required());
         this.setMatcher(commandInput.matcher());
@@ -60,6 +53,7 @@ public class CommandInputEntity implements Serializable {
         this.setTrueValue(commandInput.trueValue());
         this.setFalseValue(commandInput.falseValue());
         this.setSensitive(commandInput.sensitive());
+        this.setSelectValues(commandInput.selectValues());
         this.setMultipleDelimiterByName(commandInput.multipleDelimiter());
 
         switch (commandInput.type()) {
@@ -71,6 +65,12 @@ public class CommandInputEntity implements Serializable {
                 break;
             case "number":
                 this.setType(Type.NUMBER);
+                break;
+            case "select-one":
+                this.setType(Type.SELECT);
+                break;
+            case "select-many":
+                this.setType(Type.MULTISELECT);
                 break;
             default:
                 this.setType(DEFAULT_TYPE);
@@ -202,6 +202,14 @@ public class CommandInputEntity implements Serializable {
         this.sensitive = sensitive;
     }
 
+    public String getLabel() {
+        return label;
+    }
+
+    public void setLabel(String label) {
+        this.label = label;
+    }
+
     @Enumerated(EnumType.STRING)
     public MultipleDelimiter getMultipleDelimiter() {
         return multipleDelimiter;
@@ -217,6 +225,15 @@ public class CommandInputEntity implements Serializable {
         } else {
             this.setMultipleDelimiter(null);
         }
+    }
+
+    @ElementCollection
+    public List<String> getSelectValues() {
+        return selectValues;
+    }
+
+    public void setSelectValues(List<String> selectValues) {
+        this.selectValues = selectValues;
     }
 
     @Override
@@ -238,6 +255,7 @@ public class CommandInputEntity implements Serializable {
         return MoreObjects.toStringHelper(this)
                 .add("id", id)
                 .add("name", name)
+                .add("label", label)
                 .add("description", description)
                 .add("type", type)
                 .add("required", required)
@@ -249,6 +267,7 @@ public class CommandInputEntity implements Serializable {
                 .add("trueValue", trueValue)
                 .add("falseValue", falseValue)
                 .add("sensitive", sensitive)
+                .add("selectValues", selectValues)
                 .add("multipleDelimiter", multipleDelimiter)
                 .toString();
     }
@@ -256,7 +275,9 @@ public class CommandInputEntity implements Serializable {
     public enum Type {
         STRING("string"),
         BOOLEAN("boolean"),
-        NUMBER("number");
+        NUMBER("number"),
+        SELECT("select-one"),
+        MULTISELECT("select-many");
 
         public final String name;
 
