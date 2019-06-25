@@ -15,8 +15,11 @@ import com.jayway.jsonpath.Option;
 import com.jayway.jsonpath.TypeRef;
 import com.jayway.jsonpath.spi.mapper.MappingException;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.nrg.action.ClientException;
+import org.nrg.action.ServerException;
 import org.nrg.config.services.ConfigService;
 import org.nrg.containers.exceptions.CommandInputResolutionException;
 import org.nrg.containers.exceptions.CommandMountResolutionException;
@@ -60,16 +63,19 @@ import org.nrg.framework.constants.Scope;
 import org.nrg.framework.exceptions.NotFoundException;
 import org.nrg.xdat.preferences.SiteConfigPreferences;
 import org.nrg.xdat.security.helpers.Permissions;
+import org.nrg.xdat.security.helpers.Users;
 import org.nrg.xft.security.UserI;
 import org.nrg.xnat.helpers.uri.URIManager;
 import org.nrg.xnat.helpers.uri.URIManager.ArchiveItemURI;
 import org.nrg.xnat.helpers.uri.UriParserUtils;
+import org.nrg.xnat.services.archive.CatalogService;
 import org.nrg.xnat.turbine.utils.ArchivableItem;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import java.io.File;
 import java.io.IOException;
 import java.net.MalformedURLException;
 import java.nio.file.Files;
@@ -104,6 +110,7 @@ public class CommandResolutionServiceImpl implements CommandResolutionService {
     private final SiteConfigPreferences siteConfigPreferences;
     private final ObjectMapper mapper;
     private final DockerService dockerService;
+    private final CatalogService catalogService;
 
     public static final String swarmConstraintsTag = "swarm-constraints";
 
@@ -113,13 +120,15 @@ public class CommandResolutionServiceImpl implements CommandResolutionService {
                                         final DockerServerService dockerServerService,
                                         final SiteConfigPreferences siteConfigPreferences,
                                         final ObjectMapper mapper,
-                                        final DockerService dockerService) {
+                                        final DockerService dockerService,
+                                        final CatalogService catalogService) {
         this.commandService = commandService;
         this.configService = configService;
         this.dockerServerService = dockerServerService;
         this.siteConfigPreferences = siteConfigPreferences;
         this.mapper = mapper;
         this.dockerService = dockerService;
+        this.catalogService = catalogService;
     }
 
     @Override
@@ -279,7 +288,7 @@ public class CommandResolutionServiceImpl implements CommandResolutionService {
                                                                                @Nullable final Map<String, String> resolvedCommandLineValuesByReplacementKey,
                                                                                boolean resolveFully)
                 throws CommandResolutionException, UnauthorizedException {
-            final List<PreresolvedInputTreeNode<? extends Input>> rootNodes = initializePreresolvedInputTree();
+            final List<PreresolvedInputTreeNode<? extends Input>> rootNodes = initializePreresolvedInputTree(resolvedCommandLineValuesByReplacementKey);
 
             final List<ResolvedInputTreeNode<? extends Input>> resolvedInputTrees = Lists.newArrayList();
             for (final PreresolvedInputTreeNode<? extends Input> rootNode : rootNodes) {
@@ -1222,7 +1231,8 @@ public class CommandResolutionServiceImpl implements CommandResolutionService {
                     parentType);
         }
 
-        private List<PreresolvedInputTreeNode<? extends Input>> initializePreresolvedInputTree() throws CommandResolutionException {
+        private List<PreresolvedInputTreeNode<? extends Input>> initializePreresolvedInputTree(@Nullable final Map<String, String> resolvedCommandLineValuesByReplacementKey)
+                throws CommandResolutionException {
             log.debug("Initializing tree of wrapper input parent-child relationships.");
             final Map<String, PreresolvedInputTreeNode<? extends Input>> nodesThatProvideValueForCommandInputs = Maps.newHashMap();
             final Map<String, PreresolvedInputTreeNode<? extends Input>> nodesByName = Maps.newHashMap();
@@ -1279,6 +1289,12 @@ public class CommandResolutionServiceImpl implements CommandResolutionService {
                 if (nodesThatProvideValueForCommandInputs.containsKey(input.name())) {
                     final PreresolvedInputTreeNode<? extends Input> parent = nodesThatProvideValueForCommandInputs.get(input.name());
                     commandInputNode = PreresolvedInputTreeNode.create(input, parent);
+                    if (!parent.input().required() && resolvedCommandLineValuesByReplacementKey != null) {
+                        // Add a default to remove command line replacement if parent is not required
+                        // (if parent doesn't resolve to anything, this replacement doesn't occur and we wind up with
+                        // a replacement key like #SCANID# in the commandline string
+                        resolvedCommandLineValuesByReplacementKey.put(input.replacementKey(), "");
+                    }
                 } else {
                     commandInputNode = PreresolvedInputTreeNode.create(input);
                     rootNodes.add(commandInputNode);
@@ -1402,43 +1418,15 @@ public class CommandResolutionServiceImpl implements CommandResolutionService {
                 // command.json validation)
                 final List<String> commandInputChildrenValues = new ArrayList<>();
                 CommandInput ci = ResolvedCommand.collectCommandInputChildrenOfMultipleDerivedInput((CommandWrapperDerivedInput) input,
-                        resolvedValueAndChildren, commandInputChildrenValues);
+                        resolvedValueAndChildren, commandInputChildrenValues, resolveFully);
 
-                String values = String.join(" ", commandInputChildrenValues);
-                resolvedInputValuesByReplacementKey.put(ci.replacementKey(), values);
-                resolvedInputValuesByReplacementKey.put(input.replacementKey(), values);
+                String valString = commandInputChildrenValues.toString();
+                if (ci != null) resolvedInputValuesByReplacementKey.put(ci.replacementKey(), valString);
+                resolvedInputValuesByReplacementKey.put(input.replacementKey(), valString);
 
-                if (resolvedCommandLineValuesByReplacementKey != null) {
-                    // Handle command-line parsing
-                    String prefix = "";
-                    String suffix = "";
-                    String delimiter;
-                    CommandInputEntity.MultipleDelimiter multipleDelimiter =
-                            CommandInputEntity.MultipleDelimiter.getByName(ci.multipleDelimiter());
-                    switch (multipleDelimiter) {
-                        case QUOTED_SPACE:
-                            delimiter = " ";
-                            prefix = "'";
-                            suffix = "'";
-                            break;
-                        case SPACE:
-                            delimiter = " ";
-                            break;
-                        case COMMA:
-                            delimiter = ",";
-                            break;
-                        case FLAG:
-                            delimiter = " " + StringUtils.defaultIfBlank(ci.commandLineFlag(), " ") +
-                                    StringUtils.defaultIfBlank(ci.commandLineSeparator(), " ");
-                            break;
-                        default:
-                            // Should never happen per CommandInputEntity.MultipleDelimiter.getByName
-                            throw new CommandResolutionException("Invalid multiple-delimiter for \"" + input.name() + "\"");
-                    }
-
+                if (resolvedCommandLineValuesByReplacementKey != null && ci != null) {
                     resolvedCommandLineValuesByReplacementKey.put(ci.replacementKey(),
-                            getValueForCommandLine(ci,
-                                    prefix + String.join(delimiter, commandInputChildrenValues) + suffix));
+                            getMultipleValuesForCommandLine(ci, commandInputChildrenValues));
                 }
             } else {
                 // This node has multiple values, so we can't add any uniquely resolved values to the map
@@ -1455,21 +1443,79 @@ public class CommandResolutionServiceImpl implements CommandResolutionService {
         }
 
         @Nonnull
-        private String getValueForCommandLine(final CommandInput input, final String resolvedInputValue) {
-            log.debug("Resolving command-line value.");
-            if (StringUtils.isBlank(resolvedInputValue)) {
-                log.debug("Input value is null. Using value \"\" on the command line.");
+        private String getMultipleValuesForCommandLine(final CommandInput ci,
+                                                       @Nonnull final List<String> commandInputChildrenValues)
+                throws CommandResolutionException {
+
+            if (commandInputChildrenValues.isEmpty()) {
+                log.debug("Input value is empty. Using value \"\" on the command line.");
                 return "";
             }
-            if (StringUtils.isBlank(input.commandLineFlag())) {
-                log.debug("Input flag is null. Using value \"{}\" on the command line.", resolvedInputValue);
-                return resolvedInputValue;
+
+            String prefix = "";
+            String suffix = "";
+            String delimiter;
+            CommandInputEntity.MultipleDelimiter multipleDelimiter =
+                    CommandInputEntity.MultipleDelimiter.getByName(ci.multipleDelimiter());
+            switch (multipleDelimiter) {
+                case QUOTED_SPACE:
+                    delimiter = " ";
+                    prefix = "'";
+                    suffix = "'";
+                    break;
+                case SPACE:
+                    delimiter = " ";
+                    break;
+                case COMMA:
+                    delimiter = ",";
+                    break;
+                case FLAG:
+                    prefix = StringUtils.defaultIfBlank(ci.commandLineFlag(), " ") +
+                             StringUtils.defaultIfBlank(ci.commandLineSeparator(), " ");
+                    delimiter = " " + prefix;
+                    break;
+                default:
+                    // Should never happen per CommandInputEntity.MultipleDelimiter.getByName
+                    throw new CommandResolutionException("Invalid multiple-delimiter for \"" + ci.name() + "\"");
+            }
+
+            String value = prefix + String.join(delimiter, commandInputChildrenValues) + suffix;
+            log.debug("Using value \"{}\" on the command line.", value);
+            return value;
+        }
+
+        @Nonnull
+        private String getValueForCommandLine(final CommandInput input, final String resolvedInputValue)
+                throws CommandResolutionException {
+
+            log.debug("Resolving command-line value.");
+            if (StringUtils.isBlank(resolvedInputValue)) {
+                log.debug("Input value is blank. Using value \"\" on the command line.");
+                return "";
+            }
+            List<String> valueList = null;
+            if (input.isMultiSelect()) {
+                try {
+                    valueList = mapper.readValue(resolvedInputValue, new TypeReference<List<String>>() {});
+                } catch (IOException e) {
+                    // Not a list, treat as string
+                }
+            }
+
+            if (valueList != null) {
+                // handle multiples
+                return getMultipleValuesForCommandLine(input, valueList);
             } else {
-                final String value = input.commandLineFlag() +
-                        (input.commandLineSeparator() == null ? " " : input.commandLineSeparator()) +
-                        resolvedInputValue;
-                log.debug("Using value \"{}\" on the command line.", value);
-                return value;
+                if (StringUtils.isBlank(input.commandLineFlag())) {
+                    log.debug("Input flag is null. Using value \"{}\" on the command line.", resolvedInputValue);
+                    return resolvedInputValue;
+                } else {
+                    final String value = input.commandLineFlag() +
+                            (input.commandLineSeparator() == null ? " " : input.commandLineSeparator()) +
+                            resolvedInputValue;
+                    log.debug("Using value \"{}\" on the command line.", value);
+                    return value;
+                }
             }
         }
 
@@ -1886,18 +1932,20 @@ public class CommandResolutionServiceImpl implements CommandResolutionService {
 
                     // Ok, we have found an output. Make sure it can handle another output.
                     // Basically, *this* output handler needs to make a resource, and the
-                    // *target* output handler needs to make an assessor.
+                    // *target* output handler needs to make an assessor or a scan.
                     final boolean thisHandlerIsAResource = commandOutputHandler.type().equals(CommandWrapperOutputEntity.Type.RESOURCE.getName());
-                    final boolean targetHandlerIsAnAssessor = otherOutputHandler.type().equals(CommandWrapperOutputEntity.Type.ASSESSOR.getName());
-                    if (!(thisHandlerIsAResource && targetHandlerIsAnAssessor)) {
+                    final boolean targetHandlerIsSupported = CommandWrapperOutputEntity.Type.supportedParentOutputTypeNames()
+                            .contains(otherOutputHandler.type());
+                    if (!(thisHandlerIsAResource && targetHandlerIsSupported)) {
                         // This output is supposed to be uploaded to an object that is created by another output,
-                        // but that can only happen (as of now, 2018-03-23) when the first output is an assessor
-                        // and any subsequent outputs are resources
+                        // but that can only happen when the first (parent) output is an assessor or a scan
+                        // and any subsequent (child) outputs are resources
                         final String message = String.format("Cannot resolve handler \"%1$s\". " +
                                         "Handler \"%1$s\" has type \"%2$s\"; target handler \"%3$s\" has type \"%4$s\". " +
-                                        "Handler \"%1$s\" must be type Resource, target handler \"%3$s\" needs to be type Assessor.",
+                                        "Handler \"%1$s\" must be type Resource, target handler \"%3$s\" needs to be type %5$s.",
                                 commandOutputHandler.name(), commandOutputHandler.type(),
-                                commandOutputHandler.targetName(), otherOutputHandler.type());
+                                commandOutputHandler.targetName(), otherOutputHandler.type(),
+                                String.join(" OR ", CommandWrapperOutputEntity.Type.supportedParentOutputTypeNames()));
                         if (Boolean.TRUE.equals(commandOutput.required()) && !outputHasAtLeastOneLegitHandler) {
                             throw new CommandResolutionException(message);
                         } else {
@@ -2190,7 +2238,6 @@ public class CommandResolutionServiceImpl implements CommandResolutionService {
 
                     rootDirectory = JsonPath.parse(resolvedInputValue.jsonValue()).read("directory", String.class);
                     uri = xnatModelObject.getUri();
-
                 } else {
                     final String message = String.format("I don't know how to provide files to a mount from an input of type \"%s\".", inputType);
                     log.error(message);
@@ -2224,7 +2271,9 @@ public class CommandResolutionServiceImpl implements CommandResolutionService {
             return resolvedCommandMount;
         }
 
-        private ResolvedCommandMount transportMount(final PartiallyResolvedCommandMount partiallyResolvedCommandMount) throws CommandResolutionException {
+        private ResolvedCommandMount transportMount(final PartiallyResolvedCommandMount partiallyResolvedCommandMount)
+                throws CommandResolutionException {
+
             final String resolvedCommandMountName = partiallyResolvedCommandMount.name();
             final ResolvedCommandMount.Builder resolvedCommandMountBuilder = partiallyResolvedCommandMount.toResolvedCommandMountBuilder();
 
@@ -2237,18 +2286,41 @@ public class CommandResolutionServiceImpl implements CommandResolutionService {
                 final String directory = partiallyResolvedCommandMount.fromRootDirectory();
                 final boolean hasDirectory = StringUtils.isNotBlank(directory);
                 final boolean writable = partiallyResolvedCommandMount.writable();
+                // Determine if this particular URI has remote files
+                boolean hasRemoteFiles;
+                try {
+                    hasRemoteFiles = catalogService.hasRemoteFiles(userI, partiallyResolvedCommandMount.fromUri());
+                } catch (ClientException | ServerException e) {
+                    throw new CommandResolutionException(e.getMessage());
+                }
 
-                if (hasDirectory && writable) {
-                    // The mount has a directory and is set to "writable". We must copy files from the root directory into a writable build directory.
+                if (hasDirectory && (writable || hasRemoteFiles)) {
+                    // The mount has a directory and is set to "writable" or may have remote files. We must copy files
+                    // from the root directory into a writable build directory.
                     try {
                         localDirectory = getBuildDirectory();
                     } catch (IOException e) {
-                        throw new ContainerMountResolutionException("Could not create build directory.", partiallyResolvedCommandMount, e);
+                        throw new ContainerMountResolutionException("Could not create build directory.",
+                                partiallyResolvedCommandMount, e);
                     }
-                    log.debug("Mount \"{}\" has a root directory and is set to \"writable\". Copying all files from the root directory to build directory.", resolvedCommandMountName);
+                    log.debug("Mount \"{}\" has a root directory and is set to \"writable\". Copying all files from " +
+                            "the root directory to build directory.", resolvedCommandMountName);
 
-                    // TODO CS-54 We must copy all files out of the root directory to a build directory.
-                    log.debug("TODO");
+                    // CS-54 Copy all files out of the root directory to a build directory.
+                    try {
+                        FileUtils.copyDirectory(new File(directory), new File(localDirectory));
+                        if (hasRemoteFiles) {
+                            log.debug("Pulling any remote files into mount \"{}\".", resolvedCommandMountName);
+                            catalogService.pullResourceCatalogsToDestination(Users.getAdminUser(),
+                                    partiallyResolvedCommandMount.fromUri(), localDirectory);
+                        }
+                    } catch (IOException e) {
+                        throw new ContainerMountResolutionException("Could not copy archive directory " + directory +
+                                " into writable build directory " + localDirectory, partiallyResolvedCommandMount, e);
+                    } catch (ServerException | ClientException e) {
+                        throw new ContainerMountResolutionException("Could not pull remote files into writable build " +
+                                "directory " + localDirectory + ": " + e.getMessage(), partiallyResolvedCommandMount, e);
+                    }
                 } else if (hasDirectory) {
                     // The source of files can be directly mounted
                     log.debug("Mount \"{}\" has a root directory and is not set to \"writable\". The root directory can be mounted directly into the container.", resolvedCommandMountName);

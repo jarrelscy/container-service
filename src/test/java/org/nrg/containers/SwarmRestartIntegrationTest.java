@@ -63,6 +63,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.File;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
 import static org.awaitility.Awaitility.await;
@@ -327,7 +328,7 @@ public class SwarmRestartIntegrationTest {
         final Container restartedContainer = containerService.get(service.databaseId());
         containersToCleanUp.add(restartedContainer.serviceId());
         assertThat(restartedContainer.countRestarts(), is(1));
-        await().until(TestingUtils.serviceIsRunning(CLIENT, restartedContainer)); //Running again = success!
+        await().atMost(30L, TimeUnit.SECONDS).until(TestingUtils.serviceIsRunning(CLIENT, restartedContainer)); //Running again = success!
     }
 
     @Test
@@ -336,7 +337,7 @@ public class SwarmRestartIntegrationTest {
         containerService.queueResolveCommandAndLaunchContainer(null, sleeperWrapper.id(), 0L,
                 null, Collections.<String, String>emptyMap(), mockUser, fakeWorkflow);
         final Container service = TestingUtils.getContainerFromWorkflow(containerService, fakeWorkflow);
-
+        containersToCleanUp.add(service.serviceId());
         TestingUtils.commitTransaction();
 
         // Restart
@@ -377,6 +378,7 @@ public class SwarmRestartIntegrationTest {
             // ensure that container restarted & status updates, etc
             service = containerService.get(service.databaseId());
             if (i == 6) {
+                containersToCleanUp.add(service.serviceId());
                 break;
             }
             assertThat(service.countRestarts(), is(i++));
@@ -394,7 +396,7 @@ public class SwarmRestartIntegrationTest {
         containerService.consumeResolveCommandAndLaunchContainer(null, sleeperWrapper.id(), 0L,
                 null, Collections.<String, String>emptyMap(), mockUser, fakeWorkflow.getWorkflowId().toString());
         final Container service = TestingUtils.getContainerFromWorkflow(containerService, fakeWorkflow);
-
+        containersToCleanUp.add(service.serviceId());
         TestingUtils.commitTransaction();
 
         log.debug("Kill service as if through API");

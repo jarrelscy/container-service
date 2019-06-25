@@ -9,6 +9,7 @@ import com.spotify.docker.client.messages.swarm.Service;
 import com.spotify.docker.client.messages.swarm.Task;
 import com.spotify.docker.client.messages.swarm.TaskStatus;
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.hamcrest.CustomTypeSafeMatcher;
 import org.mockito.ArgumentMatcher;
 import org.nrg.containers.model.container.auto.Container;
@@ -153,10 +154,20 @@ public class TestingUtils {
     }
 
     public static Callable<Boolean> serviceIsRunning(final DockerClient CLIENT, final Container container) {
+        return serviceIsRunning(CLIENT, container, false);
+    }
+
+    public static Callable<Boolean> serviceIsRunning(final DockerClient CLIENT, final Container container,
+                                                     boolean rtnForNoServiceId) {
         return new Callable<Boolean>() {
             public Boolean call() throws Exception {
                 try {
-                    final Service serviceResponse = CLIENT.inspectService(container.serviceId());
+                    String servicdId = container.serviceId();
+                    if (StringUtils.isBlank(servicdId)) {
+                        // Want this to be the value we aren't waiting for
+                        return rtnForNoServiceId;
+                    }
+                    final Service serviceResponse = CLIENT.inspectService(servicdId);
                     final List<Task> tasks = CLIENT.listTasks(Task.Criteria.builder().serviceName(serviceResponse.spec().name()).build());
                     if (tasks.size() == 0) {
                         return false;
@@ -241,8 +252,8 @@ public class TestingUtils {
             public Boolean call() throws Exception {
                 PersistentWorkflowI wrk = WorkflowUtils.getUniqueWorkflow(user, container.workflowId());
                 return wrk != null &&
-                        wrk.getStatus().equals(PersistentWorkflowUtils.COMPLETE) ||
-                        wrk.getStatus().contains(PersistentWorkflowUtils.FAILED);
+                        (wrk.getStatus().equals(PersistentWorkflowUtils.COMPLETE) ||
+                        wrk.getStatus().contains(PersistentWorkflowUtils.FAILED));
             }
         };
     }

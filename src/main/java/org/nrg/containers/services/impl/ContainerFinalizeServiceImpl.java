@@ -3,10 +3,7 @@ package org.nrg.containers.services.impl;
 import static org.nrg.containers.model.command.entity.CommandWrapperOutputEntity.Type.ASSESSOR;
 import static org.nrg.containers.model.command.entity.CommandWrapperOutputEntity.Type.RESOURCE;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.InputStream;
+import java.io.*;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -30,6 +27,7 @@ import org.nrg.containers.exceptions.DockerServerException;
 import org.nrg.containers.exceptions.NoDockerServerException;
 import org.nrg.containers.exceptions.UnauthorizedException;
 import org.nrg.containers.jms.requests.ContainerRequest;
+import org.nrg.containers.model.command.entity.CommandWrapperOutputEntity;
 import org.nrg.containers.model.container.auto.Container;
 import org.nrg.containers.model.container.auto.Container.ContainerMount;
 import org.nrg.containers.model.container.auto.Container.ContainerOutput;
@@ -452,14 +450,15 @@ public class ContainerFinalizeServiceImpl implements ContainerFinalizeService {
                         throw new UnauthorizedException(message);
                     }
 
-                    final XnatResourcecatalog resourcecatalog = catalogService.insertResources(userI, parentUri, toUpload,
-                            uploadEventId, true, label, null, output.format(), null);
+                    final XnatResourcecatalog resourcecatalog = catalogService.insertResources(userI, parentUri,
+                            toUpload, uploadEventId, true, true,
+                            label, null, output.format(), null);
                     createdUri = UriParserUtils.getArchiveUri(resourcecatalog);
                     if (StringUtils.isBlank(createdUri)) {
                         createdUri = parentUri + "/resources/" + resourcecatalog.getLabel();
                     }
                 } catch (ClientException e) {
-                    final String message = String.format(prefix + "User does not have permission to add resources to item with URI %s.", parentUri);
+                    final String message = String.format(prefix + ": " + e.getMessage(), parentUri);
                     log.error(message);
                     throw new UnauthorizedException(message);
                 } catch (Exception e) {
@@ -474,47 +473,51 @@ public class ContainerFinalizeServiceImpl implements ContainerFinalizeService {
                 //    final String message = String.format(prefix + "Could not refresh catalog for resource %s.", createdUri);
                 //    log.error(message, e);
                 //}
-            } else if (type.equals(ASSESSOR.getName())) {
+            } else if (CommandWrapperOutputEntity.Type.xmlUploadTypes().contains(type)) {
 
-                final ContainerMount mount = getMount(output.mount());
-                final String absoluteFilePath = FilenameUtils.concat(mount.xnatHostPath(), output.path());
-                final InputStream fileInputStream;
-                try {
-                    fileInputStream = new FileInputStream(absoluteFilePath);
-                } catch (FileNotFoundException e) {
-                    final String message = prefix + String.format("Could not read file from mount %s at path %s.", mount.name(), output.path());
-                    log.error(message);
-                    throw new ContainerException(message, e);
-                }
-
-                XFTItem item;
-                try {
-                    item = catalogService.insertXmlObject(userI, fileInputStream, true, Collections.<String, Object>emptyMap());
-                } catch (Exception e) {
-                    final String message = prefix + String.format("Could not insert object from XML file from mount %s at path %s.", mount.name(), output.path());
-                    log.error(message);
-                    throw new ContainerException(message, e);
-                }
-
-                if (item == null) {
-                    final String message = prefix + String.format("An unknown error occurred creating object from XML file from mount %s at path %s.", mount.name(), output.path());
+                File itemXml;
+                if (toUpload.size() != 1 || !(itemXml = toUpload.get(0)).getName().matches(".*\\.xml$")) {
+                    final String message = prefix + "Expecting precisely one xml file to upload for " + type +
+                            "; found " + toUpload;
                     log.error(message);
                     throw new ContainerException(message);
                 }
 
-                final String createdUriThatNeedsToBeChecked = UriParserUtils.getArchiveUri(item);
+                log.debug("{}Inserting {}.\n\tuser: {}\n\tparentUri: {}\n\tlabel: {}\n\txml: {}",
+                        prefix, type, userI.getLogin(), parentUri, label, itemXml);
 
-                // The URI that is returned from UriParserUtils is technically correct, but doesn't work very well.
-                // It is of the form /experiments/{assessorId}. If we try to upload resources to it, that will fail.
-                // We have to manually turn it into a URI of the form /experiments/{sessionId}/assessors/{assessorId}.
-                final Matcher createdUriMatchesExperimentUri = experimentUri.matcher(createdUriThatNeedsToBeChecked);
-                createdUri = createdUriMatchesExperimentUri.matches() ?
-                        String.format("%s/assessors/%s", parentUri, createdUriMatchesExperimentUri.group(2)) :
-                        createdUriThatNeedsToBeChecked;
+                try {
+                    // Get item from xml
+                    XFTItem item = catalogService.insertXmlObject(userI, itemXml,
+                            true, Collections.<String, Object>emptyMap(), uploadEventId);
 
+                    if (item == null) {
+                        throw new Exception();
+                    }
+
+                    createdUri = UriParserUtils.getArchiveUri(item);
+
+                    if (type.equals(ASSESSOR.getName())) {
+                        // The URI that is returned from UriParserUtils is technically correct, but doesn't work very well.
+                        // It is of the form /experiments/{assessorId}. If we try to upload resources to it, that will fail.
+                        // We have to manually turn it into a URI of the form /experiments/{sessionId}/assessors/{assessorId}.
+                        final Matcher createdUriMatchesExperimentUri = experimentUri.matcher(createdUri);
+                        createdUri = createdUriMatchesExperimentUri.matches() ?
+                                String.format("%s/assessors/%s", parentUri, createdUriMatchesExperimentUri.group(2)) :
+                                createdUri;
+                    }
+                } catch (IOException e) {
+                    final String message = prefix + "Could not read " + itemXml;
+                    log.error(message);
+                    throw new ContainerException(message, e);
+                } catch (Exception e) {
+                    final String message = prefix + "Could not insert item from XML file " + itemXml;
+                    log.error(message);
+                    throw new ContainerException(message, e);
+                }
             }
 
-            log.info(prefix + "Done uploading output \"{}\". URI of created output: {}", output.name(), createdUri);
+            log.info("{}Done uploading output \"{}\". URI of created item: {}", prefix, output.name(), createdUri);
 
             // We use the "fromOutputHandler" property here rather than name. The reason is that we will be looking
             // up the value later based on what users set in subsequent handers' "handled-by" properties, and the value
