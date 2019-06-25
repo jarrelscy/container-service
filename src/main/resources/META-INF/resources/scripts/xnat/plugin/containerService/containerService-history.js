@@ -1,5 +1,5 @@
 /*
- * web: containerServices-siteAdmin.js
+ * web: containerServices-history.js
  * XNAT http://www.xnat.org
  * Copyright (c) 2005-2017, Washington University School of Medicine and Howard Hughes Medical Institute
  * All Rights Reserved
@@ -143,15 +143,26 @@ XNAT.plugin.containerService = getObject(XNAT.plugin.containerService || {});
     function getProjectIdFromMounts(entry) {
         var mounts = entry.mounts;
         // assume that the first mount of a container is an input from a project. Parse the URI for that mount and return the project ID.
-        if (mounts.length) {
-            var inputMount = mounts[0]['xnat-host-path'];
-            if (inputMount === undefined) return false;
-
-            inputMount = inputMount.replace('/data/xnat/archive/', '');
-            inputMount = inputMount.replace('/data/archive/', '');
-            inputMount = inputMount.replace('/REST/archive/', '');
-            var inputMountEls = inputMount.split('/');
-            return inputMountEls[0];
+        //This does not work all the time - so traverse all the array elements to get the host-path
+        var	mLen = mounts.length;
+        var i,found = 0;
+        var project = "Unknown";
+        if (mLen) {
+            for (i = 0; i < mLen; i++) {
+                var inputMount = mounts[i]['xnat-host-path'];
+				// TODO this is bad - assumes that archive dir is always "archive" (used to assume /data/archive)
+                if (inputMount === undefined || !inputMount.includes("/archive/")) continue;
+				inputMount = inputMount.replace(/.*\/archive\//,'');
+                var inputMountEls = inputMount.split('/');
+                project = inputMountEls[0];
+                found = 1;
+                break;
+            }
+            if (found) {
+                return project;
+            } else {
+                return false;
+            }
         } else {
             return false;
         }
@@ -322,17 +333,21 @@ XNAT.plugin.containerService = getObject(XNAT.plugin.containerService || {});
                     filter: true,
                     td: { style: { 'max-width': '200px', 'word-wrap': 'break-word', 'overflow-wrap': 'break-word' }},
                     apply: function () {
-                        var wrapper = XNAT.plugin.containerService.wrapperList[this['wrapper-id']];
-                        var label = (wrapper) ?
-                            (wrapper.description) ?
+                        var label, wrapper;
+                        if (wrapperList && wrapperList.hasOwnProperty(this['wrapper-id'])) {
+                            wrapper = wrapperList[this['wrapper-id']];
+                            label = (wrapper.description) ?
                                 wrapper.description :
-                                wrapper.name
-                            : this['command-line'];
+                                wrapper.name;
+                        } else {
+                            label = this['command-line'];
+                        }
 
                         return spawn('a.view-container-history', {
                             href: '#!',
-                            title: 'From image: '+this['docker-image'],
+                            title: 'View command history and logs',
                             data: {'id': this.id},
+                            style: { wordWrap: 'break-word' },
                             html: label
                         });
                     }
@@ -387,141 +402,284 @@ XNAT.plugin.containerService = getObject(XNAT.plugin.containerService || {});
         }
     }
 
+    historyTable.workflowModal = function(workflowIdOrEvent) {
+        var workflowId;
+        if (workflowIdOrEvent.hasOwnProperty("data")) {
+            // this is an event
+            workflowId = workflowIdOrEvent.data.wfid;
+        } else {
+            workflowId = workflowIdOrEvent;
+        }
+        // rptModal in xdat.js
+        rptModal.call(this, workflowId, "wrk:workflowData", "wrk:workflowData.wrk_workflowData_id");
+    };
 
-    historyTable.viewLog = viewLog = function (containerId, logFile) {
-        XNAT.xhr.get({
-            url: rootUrl('/xapi/containers/' + containerId + '/logs/' + logFile),
-            success: function (data) {
-                // split the output into lines
-                data = data.split('\n');
+    var containerModalId = function(containerId, logFile) {
+        return 'container-'+containerId+'-log-'+logFile;
+    };
 
+    historyTable.refreshLog = refreshLog = function(containerId, logFile, refreshLogSince, startTime) {
+        var refreshPrm = {};
+        if (refreshLogSince) {
+            if (refreshLogSince === -1) return;
+
+            refreshPrm = {since: refreshLogSince};
+        }
+        if (!startTime) {
+            startTime = new Date();
+        } else {
+            var maxUptime = 900; //sec
+            var uptime = Math.round((new Date() - startTime)/1000);
+            if (uptime >= maxUptime) {
+                // This will stop making ajax requests until the user clicks "continue"
+                // thus allowing the session timeout to handle an expiring session
                 XNAT.dialog.open({
-                    title: 'View ' + logFile,
-                    width: 850,
-                    content: null,
-                    beforeShow: function (obj) {
-                        data.forEach(function (newLine) {
-                            obj.$modal.find('.xnat-dialog-content').append(spawn('pre', {'style': {'font-size':'12px','margin':'0', 'white-space':'pre-wrap'}}, newLine));
-                        });
-                    },
+                    width: 360,
+                    content: '' +
+                        '<div style="font-size:14px;">' +
+                        'Are you still watching this log?' +
+                        '<br><br>'+
+                        'Click <b>"Continue"</b> to continue tailing the log ' +
+                        'or <b>"Close"</b> to close it.' +
+                        '</div>',
                     buttons: [
                         {
-                            label: 'OK',
+                            label: 'Close',
+                            close: true,
+                            action: function(){
+                                XNAT.dialog.closeAll();
+                            }
+                        },
+                        {
+                            label: 'Continue',
                             isDefault: true,
-                            close: true
+                            close: true,
+                            action: function(){
+                                refreshLog(containerId, logFile, refreshLogSince);
+                            }
                         }
                     ]
-                })
+                });
+                return;
+            }
+        }
+
+        XNAT.xhr.getJSON({
+            url: rootUrl('/xapi/containers/' + containerId + '/logSince/' + logFile),
+            data: refreshPrm,
+            success: function (dataJson) {
+                var timestamp = dataJson.timestamp;
+                var $container = $('#' + containerModalId(containerId, logFile) + ' .xnat-dialog-body');
+                // Ensure that user didn't close modal
+                if ($container.length === 0) {
+                    return;
+                }
+                var currentScrollPos = $container.scrollTop(),
+                    containerHeight = $container[0].scrollHeight,
+                    autoScroll = $container.height() + currentScrollPos >= containerHeight; //user has not scrolled
+
+                //append content
+                var lines = dataJson.content.split('\n').filter(function(line){return line;}); // remove empty lines
+                if (lines.length > 0) {
+                    $container.find('.xnat-dialog-content').append(spawn('pre',
+                        {'style': {'font-size':'12px','margin':'0', 'white-space':'pre-wrap'}}, lines.join('<br/>')));
+                }
+
+                //scroll to bottom
+                if (autoScroll) $container.scrollTop($container[0].scrollHeight);
+
+                refreshLog(containerId, logFile, timestamp, startTime);
             },
             fail: function (e) {
                 errorHandler(e, 'Cannot retrieve ' + logFile);
             }
-        })
+        });
     };
 
-    historyTable.viewHistory = function (id) {
-        if (containerHistory[id]) {
-            var historyEntry = XNAT.plugin.containerService.containerHistory[id];
-            var historyDialogButtons = [
+    historyTable.viewLog = viewLog = function (containerId, logFile) {
+        XNAT.dialog.open({
+            title: 'View ' + logFile,
+            id: containerModalId(containerId, logFile),
+            width: 850,
+            header: true,
+            maxBtn: true,
+            content: null,
+            beforeShow: function() {
+                refreshLog(containerId, logFile);
+            },
+            buttons: [
                 {
-                    label: 'OK',
+                    label: 'Done',
                     isDefault: true,
                     close: true
                 }
-            ];
+            ]
+        });
+    };
 
-            // build nice-looking history entry table
-            var pheTable = XNAT.table({
-                className: 'xnat-table compact',
-                style: {
-                    width: '100%',
-                    marginTop: '15px',
-                    marginBottom: '15px'
-                }
-            });
+    historyTable.viewHistoryEntry = function(historyEntry) {
+        var historyDialogButtons = [
+            {
+                label: 'Done',
+                isDefault: true,
+                close: true
+            }
+        ];
 
-            // add table header row
-            pheTable.tr()
-                .th({addClass: 'left', html: '<b>Key</b>'})
-                .th({addClass: 'left', html: '<b>Value</b>'});
+        // build nice-looking history entry table
+        var pheTable = XNAT.table({
+            className: 'xnat-table compact',
+            style: {
+                width: '100%',
+                marginTop: '15px',
+                marginBottom: '15px'
+            }
+        });
 
-            for (var key in historyEntry) {
-                var val = historyEntry[key], formattedVal = '';
-                if (Array.isArray(val)) {
-                    var items = [];
-                    val.forEach(function (item) {
-                        if (typeof item === 'object') item = JSON.stringify(item);
-                        items.push(spawn('li', [spawn('code', item)]));
+        var allTables = [spawn('h3', 'Container information'), pheTable.table];
+
+        for (var key in historyEntry) {
+            var val = historyEntry[key], formattedVal = '', putInTable = true;
+
+            if (Array.isArray(val) && val.length > 0) {
+                // Display a table
+                var columns = [];
+                val.forEach(function (item) {
+                    if (typeof item === 'object') {
+                        Object.keys(item).forEach(function(itemKey){
+                            if(columns.indexOf(itemKey)===-1){
+                                columns.push(itemKey);
+                            }
+                        });
+                    }
+                });
+
+
+                formattedVal="<table class='xnat-table'>";
+                if (columns.length > 0) {
+                    formattedVal+="<tr>";
+                    columns.forEach(function(colName){
+                        formattedVal+="<th>"+colName+"</th>";
                     });
-                    formattedVal = spawn('ul', {style: {'list-style-type': 'none', 'padding-left': '0'}}, items);
-                } else if (typeof val === 'object') {
-                    formattedVal = spawn('code', JSON.stringify(val));
-                } else if (!val) {
-                    formattedVal = spawn('code', 'false');
+                    formattedVal+="</tr>";
+
+                    val.sort(function(obj1,obj2){
+                        // Sort by time recorded (if we have it)
+                        var date1 = Date.parse(obj1["time-recorded"]), date2 = Date.parse(obj2["time-recorded"]);
+                        return date1 - date2;
+                    });
                 } else {
-                    formattedVal = spawn('code', val);
+                    // skip header if we just have one column
+                    // sort alphabetically
+                    val.sort()
                 }
 
-                pheTable.tr()
-                    .td('<b>' + key + '</b>')
-                    .td([spawn('div', {style: {'word-break': 'break-all', 'max-width': '600px'}}, formattedVal)]);
-
-                // check logs and populate buttons at bottom of modal
-                if (key === 'log-paths' && historyEntry.context === 'site') {
-                    historyDialogButtons.push({
-                        label: 'View StdOut.log',
-                        close: false,
-                        action: function(){
-                            var jobid = historyEntry['container-id'];
-                            if (!jobid || jobid === "") {
-                                jobid = historyEntry['service-id'];
-                            }
-                            historyTable.viewLog(jobid,'stdout')
-                        }
-                    });
-
-                    historyDialogButtons.push({
-                        label: 'View StdErr.log',
-                        close: false,
-                        action: function(){
-                            var jobid = historyEntry['container-id'];
-                            if (!jobid || jobid === "") {
-                                jobid = historyEntry['service-id'];
-                            }
-                            historyTable.viewLog(jobid,'stderr')
-                        }
-                    })
-                }
-                if (key === 'setup-container-id') {
-                    historyDialogButtons.push({
-                        label: 'View Setup Container',
-                        close: true,
-                        action: function () {
-                            historyTable.viewHistory(historyEntry[key]);
-                        }
-                    })
-                }
-                if (key === 'parent-database-id' && historyEntry[key]) {
-                    var parentId = historyEntry[key];
-                    historyDialogButtons.push({
-                        label: 'View Parent Container',
-                        close: true,
-                        action: function () {
-                            historyTable.viewHistory(parentId);
-                        }
-                    })
-                }
-
+                val.forEach(function (item) {
+                	formattedVal+="<tr>";
+                    if (typeof item === 'object') {
+                        columns.forEach(function (itemKey) {
+                            formattedVal += "<td nowrap>";
+                            var temp = item[itemKey];
+                            if (typeof temp === 'object') temp = JSON.stringify(temp);
+                            formattedVal += temp;
+                            formattedVal += "</td>";
+                        });
+                    } else {
+                        formattedVal += "<td nowrap>";
+                        formattedVal += item;
+                        formattedVal += "</td>";
+                    }
+                    formattedVal+="</tr>";
+                });
+                formattedVal+="</table>"
+                putInTable = false;
+            } else if (typeof val === 'object') {
+                formattedVal = spawn('code', JSON.stringify(val));
+            } else if (!val) {
+                formattedVal = spawn('code', 'false');
+            } else if (key === 'workflow-id') {
+                // Allow pulling up detailed workflow info (can contain addl info in details field)
+                var curid = '#wfmodal' + val;
+                formattedVal = spawn('a' + curid, {}, val);
+                $(document).on('click', curid, {wfid: val}, historyTable.workflowModal);
+            } else {
+                formattedVal = spawn('code', val);
             }
 
-            // display history
-            XNAT.ui.dialog.open({
-                title: historyEntry['wrapper-name'],
-                width: 800,
-                scroll: true,
-                content: pheTable.table,
-                buttons: historyDialogButtons
-            });
+            if (putInTable) {
+                pheTable.tr()
+                    .td('<b>' + key + '</b>')
+                    .td([spawn('div', {style: {'word-break': 'break-all', 'max-width': '600px', 'overflow':'auto'}}, formattedVal)]);
+            } else {
+                allTables.push(
+                    spawn('div', {style: {'word-break': 'break-all', 'overflow':'auto', 'margin-bottom': '10px', 'max-width': 'max-content'}},
+                        [spawn('div.data-table-actionsrow', {}, spawn('strong', {class: "textlink-sm data-table-action"},
+                            'Container ' + key)), formattedVal])
+                );
+            }
+
+            // check logs and populate buttons at bottom of modal
+            if (key === 'log-paths') {
+                historyDialogButtons.push({
+                    label: 'View StdOut.log',
+                    close: false,
+                    action: function(){
+                        var jobid = historyEntry['container-id'];
+                        if (!jobid || jobid === "") {
+                            jobid = historyEntry['service-id'];
+                        }
+                        historyTable.viewLog(jobid,'stdout')
+                    }
+                });
+
+                historyDialogButtons.push({
+                    label: 'View StdErr.log',
+                    close: false,
+                    action: function(){
+                        var jobid = historyEntry['container-id'];
+                        if (!jobid || jobid === "") {
+                            jobid = historyEntry['service-id'];
+                        }
+                        historyTable.viewLog(jobid,'stderr')
+                    }
+                })
+            }
+            if (key === 'setup-container-id') {
+                historyDialogButtons.push({
+                    label: 'View Setup Container',
+                    close: true,
+                    action: function () {
+                        historyTable.viewHistory(historyEntry[key]);
+                    }
+                })
+            }
+            if (key === 'parent-database-id' && historyEntry[key]) {
+                var parentId = historyEntry[key];
+                historyDialogButtons.push({
+                    label: 'View Parent Container',
+                    close: true,
+                    action: function () {
+                        historyTable.viewHistory(parentId);
+                    }
+                })
+            }
+        }
+
+        // display history
+        XNAT.ui.dialog.open({
+            title: historyEntry['wrapper-name'],
+            width: 800,
+            scroll: true,
+            content: spawn('div', allTables),
+            buttons: historyDialogButtons,
+            header: true,
+            maxBtn: true
+        });
+    };
+
+    historyTable.viewHistory = function (id) {
+        if (XNAT.plugin.containerService.containerHistory.hasOwnProperty(id)) {
+            historyTable.viewHistoryEntry(XNAT.plugin.containerService.containerHistory[id]);
         } else {
             console.log(id);
             XNAT.ui.dialog.open({
@@ -550,6 +708,8 @@ XNAT.plugin.containerService = getObject(XNAT.plugin.containerService || {});
         var $manager = $('#command-history-container'),
             _historyTable;
 
+        $manager.text("Loading...");
+
         sortHistoryData(context).done(function (data) {
             if (data.length) {
                 // sort list of container launches by execution time, descending
@@ -557,6 +717,26 @@ XNAT.plugin.containerService = getObject(XNAT.plugin.containerService || {});
                     return (a.id < b.id) ? 1 : -1
                     // return (a.history[0]['time-recorded'] < b.history[0]['time-recorded']) ? 1 : -1
                 });
+
+                // Collect status summary info
+                var containerStatuses = {};
+                var statusCountMsg = "";
+                data.forEach(function (a) {
+                    if (a.status in containerStatuses) {
+                        var cnt = containerStatuses[a.status];
+                        containerStatuses[a.status] = ++cnt;
+                    } else {
+                        containerStatuses[a.status] = 1;
+                    }
+                });
+                for (var k in containerStatuses) {
+                    if (containerStatuses.hasOwnProperty(k)) {
+                        statusCountMsg += k + ":" + containerStatuses[k] + ", ";
+                    }
+                }
+                if (statusCountMsg) {
+                    statusCountMsg = ' (' + statusCountMsg.replace(/, $/,'') + ')';
+                }
 
                 _historyTable = XNAT.spawner.spawn({
                     historyTable: spawnHistoryTable(data)
@@ -568,8 +748,15 @@ XNAT.plugin.containerService = getObject(XNAT.plugin.containerService || {});
                     var msg = (context === 'site') ?
                         data.length + msgLength(data.length) + ' Launched On This Site' :
                         data.length + msgLength(data.length) + ' Launched For '+context;
+
+                    msg += statusCountMsg;
+
                     $manager.empty().append(
-                        spawn('h3', {style: {'margin-bottom': '1em'}}, msg)
+                        spawn('div.data-table-actionsrow', {}, [
+                            spawn('strong', {class: "textlink-sm data-table-action"}, msg),
+                            "&nbsp;&nbsp;",
+                            spawn('button|onclick="XNAT.plugin.containerService.historyTable.refresh(\''+context+'\')"', {class: "btn btn-sm data-table-action"}, "Reload")
+                        ])
                     );
                     this.render($manager, 20);
                 });

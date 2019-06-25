@@ -6,9 +6,22 @@ Not yet released
 
 ### Features
 
+* Use ActiveMQ queues for staging (command resolution and container launch) and finalizing containers.
+* Update UI not to wait for command resolution and container launch before returning to user, add additional details to workflow entry so user still receives all information.
+* Revamp bulk launch UI to be faster to load (only serializes first session) and show limited info to user about derived inputs. Previous bulklauncher UI would serialize all XNAT objects for all selected sessions before rendering the "launch container" form. It did this serializing, which can be very slow depending on how deep the preresolution needs to go into the hierarchy, while the user was waiting. Additionally, the resulting UI form only displayed inputs for the first session, which can be misleading or even incorrect (e.g., setting a scan id or file name as in pyradiomics) - it only worked if you want the same setting for all sessions.
+* Allow admin to define docker swarm constraints (which may be user-settable).
+* Automatically restart containers that are killed due to docker swarm nodes being removed from swarm.
+* Live logging display
+* Add support for command inputs that resolve to mulitple values (e.g., multiple T1 scans)
+
+
 ### Bugfixes
 
 * [CS-440][] Fixed an issue which caused guest users to see authentication dialog on public projects.
+* Remove @Audited annotations to prevent database size explosion
+* Mannually set swarm service names since auto-generated ones can clash on high throughput
+* Allow removal of inputs, outputs, wrappers, external inputs, derived inputs, and output handlers from command.json via API
+
 
 ### Other
 
@@ -81,6 +94,7 @@ Not yet released
 * [CS-80][] Allow command wrapper output handlers to create new objects as children of objects created by previous output handlers. The previous behavior allowed outputs to be handled only by wrapper inputs.
 * [CS-457][] Add `label` field to command wrapper. This will be used to represent the command wrapper in the "Run Container" menu going forward.
 * [CS-458][] `GET /commands/available` includes command and wrapper labels
+
 * Manually refresh resource catalog when uploading resources. (We used to rely on the Catalog Service to do this, but it doesn't anymore.)
 * [CS-407][] Add docker host setting to translate mount paths. If xnat sees a path at /data/xnat/x/y/z but your docker host sees the same path at /my/path/x/y/z, you can include these path prefixes in your docker server settings. If you're using REST, set the properties "path-translation-xnat-prefix" and "path-translation-docker-prefix" respectively. If you're using the Plugin Settings UI, the fields will be there.
 * [CS-494][] Add docker host setting for whether to check on server startup if all the images referenced by commands are present, and pull them if not.
@@ -541,7 +555,7 @@ Not yet released
 [CS-242]: https://issues.xnat.org/browse/CS-242
 
 ### Bugfixes
-* [CS-257][] Hide “Create Automation” button from project owners if they do not have admin privileges. Depends on [XNAT-5044](https://issues.xnat.org/browse/XNAT-5044) change.
+* [CS-257][] Hide "Create Automation" button from project owners if they do not have admin privileges. Depends on [XNAT-5044](https://issues.xnat.org/browse/XNAT-5044) change.
 * Fix: container -> container entity should use existing entity in db if it exists
 * Fix: Initialize container entity when retrieving by container id
 
