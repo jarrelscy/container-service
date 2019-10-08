@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.1.0
+
+Not yet released
+
+### Features
+
+### Bugfixes
+
+* [CS-572][]: Change command listing permissions to require only project-read permissions. Viewing the "Run containers" action is still restricted by item "canEdit" permissions, although this does need to be modified since, for example, a custom user group ought to be able to read an MR session and write a QC assessor by launching a container on the read-only session.
+
+### Other
+
+[CS-572]: https://issues.xnat.org/browse/CS-572
+
 ## 2.0.2
 
 Not yet released
@@ -69,7 +83,6 @@ Not yet released
 [CS-550]: https://issues.xnat.org/browse/CS-550
 [CS-557]: https://issues.xnat.org/browse/CS-557
 [CS-558]: https://issues.xnat.org/browse/CS-558
-
  
 ## 1.6.0
 
